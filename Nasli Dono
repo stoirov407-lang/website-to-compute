@@ -1,0 +1,181 @@
+from flask import Flask, render_template_string, request, redirect, session
+import sqlite3
+import os
+
+app = Flask(__name__)
+app.secret_key = "nasli_dono_secret"
+
+DB = "database.db"
+
+def init_db():
+    conn = sqlite3.connect(DB)
+    c = conn.cursor()
+
+    c.execute("""CREATE TABLE IF NOT EXISTS users (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        username TEXT UNIQUE,
+        password TEXT,
+        role TEXT
+    )""")
+
+    c.execute("""CREATE TABLE IF NOT EXISTS homework (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        title TEXT,
+        description TEXT,
+        subject TEXT,
+        teacher TEXT
+    )""")
+
+    c.execute("""CREATE TABLE IF NOT EXISTS grades (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        student TEXT,
+        subject TEXT,
+        score INTEGER
+    )""")
+
+    conn.commit()
+    conn.close()
+
+init_db()
+
+# --------- AUTH ---------
+
+@app.route("/", methods=["GET", "POST"])
+def login():
+    if request.method == "POST":
+        username = request.form["username"]
+        password = request.form["password"]
+
+        conn = sqlite3.connect(DB)
+        c = conn.cursor()
+        c.execute("SELECT * FROM users WHERE username=? AND password=?", (username, password))
+        user = c.fetchone()
+        conn.close()
+
+        if user:
+            session["user"] = username
+            session["role"] = user[3]
+            return redirect("/dashboard")
+
+    return """
+    <h2>Nasli Dono Login</h2>
+    <form method="post">
+        Username:<br>
+        <input name="username"><br>
+        Password:<br>
+        <input name="password" type="password"><br><br>
+        <button>Login</button>
+    </form>
+    <a href='/register'>Register</a>
+    """
+
+@app.route("/register", methods=["GET", "POST"])
+def register():
+    if request.method == "POST":
+        username = request.form["username"]
+        password = request.form["password"]
+
+        role = "student"
+        if username == "toirov":
+            role = "superadmin"
+
+        conn = sqlite3.connect(DB)
+        c = conn.cursor()
+        try:
+            c.execute("INSERT INTO users (username,password,role) VALUES (?,?,?)",
+                      (username, password, role))
+            conn.commit()
+        except:
+            pass
+        conn.close()
+
+        return redirect("/")
+
+    return """
+    <h2>Register</h2>
+    <form method="post">
+        Username:<br>
+        <input name="username"><br>
+        Password:<br>
+        <input name="password" type="password"><br><br>
+        <button>Register</button>
+    </form>
+    """
+
+# --------- DASHBOARD ---------
+
+@app.route("/dashboard")
+def dashboard():
+    if "user" not in session:
+        return redirect("/")
+
+    role = session["role"]
+
+    if role == "superadmin":
+        return "<h2>Super Admin Panel (toirov)</h2><a href='/logout'>Logout</a>"
+
+    if role == "admin":
+        return "<h2>Admin Panel</h2><a href='/logout'>Logout</a>"
+
+    if role == "teacher":
+        return """
+        <h2>Teacher Panel</h2>
+        <a href='/create_homework'>Create Homework</a><br>
+        <a href='/logout'>Logout</a>
+        """
+
+    if role == "student":
+        conn = sqlite3.connect(DB)
+        c = conn.cursor()
+        c.execute("SELECT subject, score FROM grades WHERE student=?", (session["user"],))
+        grades = c.fetchall()
+        conn.close()
+
+        output = "<h2>Your Grades</h2>"
+        for g in grades:
+            output += f"{g[0]}: {g[1]}<br>"
+
+        output += "<br><a href='/logout'>Logout</a>"
+        return output
+
+# --------- CREATE HOMEWORK ---------
+
+@app.route("/create_homework", methods=["GET", "POST"])
+def create_homework():
+    if session.get("role") != "teacher":
+        return redirect("/dashboard")
+
+    if request.method == "POST":
+        title = request.form["title"]
+        description = request.form["description"]
+        subject = request.form["subject"]
+
+        conn = sqlite3.connect(DB)
+        c = conn.cursor()
+        c.execute("INSERT INTO homework (title,description,subject,teacher) VALUES (?,?,?,?)",
+                  (title, description, subject, session["user"]))
+        conn.commit()
+        conn.close()
+
+        return redirect("/dashboard")
+
+    return """
+    <h2>Create Homework</h2>
+    <form method="post">
+        Title:<br>
+        <input name="title"><br>
+        Subject (English/Russian):<br>
+        <input name="subject"><br>
+        Description:<br>
+        <textarea name="description"></textarea><br><br>
+        <button>Create</button>
+    </form>
+    """
+
+@app.route("/logout")
+def logout():
+    session.clear()
+    return redirect("/")
+
+if __name__ == "__main__":
+    app.run(debug=True)
